@@ -1,0 +1,5 @@
+{
+  "name": "Agentes de Engenharia do Conhecimento Centrados no Usuário",
+  "description": "Um aplicativo de conversação para gerar artefatos de UX como Observações, Perguntas de Entrevista, Personas e Mapas de Empatia usando a API Gemini.",
+  "requestFramePermissions": []
+}
