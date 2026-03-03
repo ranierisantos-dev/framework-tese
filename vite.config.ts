@@ -5,6 +5,12 @@ import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
+    const apiKey = env.GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+    
+    if (!apiKey) {
+        console.warn('WARNING: GEMINI_API_KEY is not set in environment variables during build.');
+    }
+    
     return {
       server: {
         port: 3000,
@@ -12,8 +18,8 @@ export default defineConfig(({ mode }) => {
       },
       plugins: [react(), tailwindcss()],
       define: {
-        'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
+        'process.env.API_KEY': JSON.stringify(apiKey),
+        'process.env.GEMINI_API_KEY': JSON.stringify(apiKey)
       },
       resolve: {
         alias: {

@@ -2,9 +2,9 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { ArtifactType, GeneratedArtifact } from '../types';
 
-const API_KEY = process.env.API_KEY;
+const API_KEY = process.env.API_KEY || (import.meta as any).env?.VITE_GEMINI_API_KEY;
 if (!API_KEY) {
-    throw new Error("API_KEY environment variable not set");
+    throw new Error("API_KEY environment variable not set. Please configure GEMINI_API_KEY on Vercel.");
 }
 
 const ai = new GoogleGenAI({ apiKey: API_KEY });
