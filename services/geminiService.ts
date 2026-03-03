@@ -9,6 +9,23 @@ if (!API_KEY) {
 
 const ai = new GoogleGenAI({ apiKey: API_KEY });
 
+const FLASH_MODEL = "gemini-flash-latest";
+const PRO_MODEL = "gemini-3.1-pro-preview";
+
+const withRetry = async <T>(fn: () => Promise<T>, retries = 3, delay = 2000): Promise<T> => {
+    try {
+        return await fn();
+    } catch (error: any) {
+        const is503 = error?.message?.includes('503') || error?.status === 503;
+        if (is503 && retries > 0) {
+            console.warn(`Model busy (503). Retrying in ${delay}ms... (${retries} attempts left)`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            return withRetry(fn, retries - 1, delay * 2);
+        }
+        throw error;
+    }
+};
+
 const safeParseJson = (jsonString: string): any => {
     const match = jsonString.match(/```(json)?\s*([\s\S]*?)\s*```/);
     let textToParse = jsonString.trim();
@@ -70,14 +87,14 @@ const cleanMermaidCode = (code: string): string => {
 export const suggestPersonasFromContext = async (context: string): Promise<string[]> => {
     const prompt = `Atue como um UX Researcher Sênior. Analise o contexto do projeto fornecido abaixo e identifique de 1 a 3 personas críticoas. Contexto: ${context}`;
     try {
-        const response = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
+        const response = await withRetry(() => ai.models.generateContent({
+            model: FLASH_MODEL,
             contents: prompt,
             config: {
                 responseMimeType: "application/json",
                 responseSchema: { type: Type.ARRAY, items: { type: Type.STRING } }
             }
-        });
+        }));
         const parsed = safeParseJson(response.text);
         return Array.isArray(parsed) ? parsed : [];
     } catch (error) { 
@@ -89,7 +106,7 @@ export const suggestPersonasFromContext = async (context: string): Promise<strin
 const getObservationSummary = async (context: string): Promise<GeneratedArtifact> => {
     const prompt = `Atue como um Especialista em UX Research Sênior. Crie um relatório de síntese estruturado em Markdown (Contexto, Comportamentos, Pontos de Dor, Gambiarras, Oportunidades). Contexto: ${context}`;
     try {
-        const response = await ai.models.generateContent({ model: "gemini-3-flash-preview", contents: prompt });
+        const response = await withRetry(() => ai.models.generateContent({ model: FLASH_MODEL, contents: prompt }));
         return { text: response.text };
     } catch (error) {
         console.error("Error in getObservationSummary:", error);
@@ -100,7 +117,7 @@ const getObservationSummary = async (context: string): Promise<GeneratedArtifact
 const getInterviewQuestions = async (context: string): Promise<GeneratedArtifact> => {
     const prompt = `Atue como um Especialista em UX Research. Crie um roteiro de entrevista semi-estruturado em Markdown. Contexto: ${context}`;
     try {
-        const response = await ai.models.generateContent({ model: "gemini-3-flash-preview", contents: prompt });
+        const response = await withRetry(() => ai.models.generateContent({ model: FLASH_MODEL, contents: prompt }));
         return { text: response.text };
     } catch (error) {
         console.error("Error in getInterviewQuestions:", error);
@@ -112,11 +129,11 @@ const getEmpathyMap = async (context: string): Promise<GeneratedArtifact> => {
     const identificationPrompt = `Identifique Personas no texto e retorne JSON list [{name, role}]. Contexto: ${context}`;
     let targets: { name: string; role: string }[] = [];
     try {
-        const idResponse = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
+        const idResponse = await withRetry(() => ai.models.generateContent({
+            model: FLASH_MODEL,
             contents: identificationPrompt,
             config: { responseMimeType: "application/json", responseSchema: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { name: { type: Type.STRING }, role: { type: Type.STRING } } } } }
-        });
+        }));
         const parsed = safeParseJson(idResponse.text);
         if (parsed) targets = parsed;
     } catch (e) {
@@ -129,11 +146,11 @@ const getEmpathyMap = async (context: string): Promise<GeneratedArtifact> => {
         const dataPrompt = `Crie um Mapa de Empatia detalhado (JSON: see, hear, thinkAndFeel, sayAndDo, pains, gains) para: ${target.name}. Contexto: ${context}`;
         let empathyData: any = {};
         try {
-            const response = await ai.models.generateContent({
-                model: "gemini-3-flash-preview",
+            const response = await withRetry(() => ai.models.generateContent({
+                model: FLASH_MODEL,
                 contents: dataPrompt,
                 config: { responseMimeType: "application/json", responseSchema: { type: Type.OBJECT, properties: { see: { type: Type.ARRAY, items: { type: Type.STRING } }, hear: { type: Type.ARRAY, items: { type: Type.STRING } }, thinkAndFeel: { type: Type.ARRAY, items: { type: Type.STRING } }, sayAndDo: { type: Type.ARRAY, items: { type: Type.STRING } }, pains: { type: Type.ARRAY, items: { type: Type.STRING } }, gains: { type: Type.ARRAY, items: { type: Type.STRING } } } } }
-            });
+            }));
             const parsed = safeParseJson(response.text);
             if (parsed) empathyData = parsed;
         } catch (error) { 
@@ -143,7 +160,7 @@ const getEmpathyMap = async (context: string): Promise<GeneratedArtifact> => {
         const imagePrompt = `UX Empathy Map diagram for persona: "${target.name}". sticky notes, professional, 4k.`;
         let currentImageUrl: string | null = null;
         try {
-            const imageResponse = await ai.models.generateContent({ model: 'gemini-2.5-flash-image', contents: { parts: [{ text: imagePrompt }] } });
+            const imageResponse = await withRetry(() => ai.models.generateContent({ model: 'gemini-2.5-flash-image', contents: { parts: [{ text: imagePrompt }] } }));
             if (imageResponse.candidates?.[0].content.parts) {
                 for (const part of imageResponse.candidates[0].content.parts) {
                     if (part.inlineData) { currentImageUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`; if (!firstImageUrl) firstImageUrl = currentImageUrl; break; }
@@ -159,7 +176,7 @@ const getEmpathyMap = async (context: string): Promise<GeneratedArtifact> => {
 
 const generatePersonaImage = async (visualDescription: string): Promise<string | null> => {
     try {
-        const response = await ai.models.generateContent({ model: 'gemini-2.5-flash-image', contents: { parts: [{ text: `Professional portrait: ${visualDescription}. neutral blurred background.` }] } });
+        const response = await withRetry(() => ai.models.generateContent({ model: 'gemini-2.5-flash-image', contents: { parts: [{ text: `Professional portrait: ${visualDescription}. neutral blurred background.` }] } }));
         if (response.candidates?.[0].content.parts) {
             for (const part of response.candidates[0].content.parts) { if (part.inlineData) return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`; }
         }
@@ -170,7 +187,7 @@ const generatePersonaImage = async (visualDescription: string): Promise<string |
 const getPersona = async (context: string): Promise<GeneratedArtifact> => {
     const textPrompt = `Atue como um UX Strategist. GERE FICHAS DE PERSONAS em Markdown (Descrição Visual, Citação, Bio, Objetivos, Dores). Contexto: ${context}`;
     try {
-        const response = await ai.models.generateContent({ model: "gemini-3-flash-preview", contents: textPrompt });
+        const response = await withRetry(() => ai.models.generateContent({ model: FLASH_MODEL, contents: textPrompt }));
         let generatedText = response.text;
         const personaBlocksRegex = /# (.*?)\n\n\*\*Descrição Visual:\*\* (.*?)(?=\n)/g;
         let match;
@@ -193,7 +210,7 @@ const getPersona = async (context: string): Promise<GeneratedArtifact> => {
 const getAgentModel = async (context: string): Promise<GeneratedArtifact> => {
     const prompt = `Atue como um Engenheiro do Conhecimento (CommonKADS). Gere o Modelo de Agentes (Papel, Envolvidos, Comunicação, Conhecimento, Competências, Responsabilidades). SEM NOMES PRÓPRIOS. Contexto: ${context}`;
     try {
-        const response = await ai.models.generateContent({ model: "gemini-3-flash-preview", contents: prompt });
+        const response = await withRetry(() => ai.models.generateContent({ model: FLASH_MODEL, contents: prompt }));
         return { text: response.text };
     } catch (error) {
         console.error("Error in getAgentModel:", error);
@@ -229,10 +246,10 @@ const getKnowledgeInventory = async (context: string): Promise<GeneratedArtifact
     ${context}`;
     
     try {
-        const response = await ai.models.generateContent({ 
-            model: "gemini-3.1-pro-preview", 
+        const response = await withRetry(() => ai.models.generateContent({ 
+            model: PRO_MODEL, 
             contents: prompt 
-        });
+        }));
         return { text: response.text };
     } catch (error) {
         console.error("Error in getKnowledgeInventory:", error);
@@ -256,21 +273,26 @@ const getKnowledgeBase = async (context: string): Promise<GeneratedArtifact> => 
     Contexto do Projeto:
     ${context}`;
 
-    const response = await ai.models.generateContent({ 
-        model: "gemini-3.1-pro-preview", 
-        contents: prompt,
-        config: {
-            responseMimeType: "application/json"
-        }
-    });
+    try {
+        const response = await withRetry(() => ai.models.generateContent({ 
+            model: PRO_MODEL, 
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json"
+            }
+        }));
 
-    return { text: response.text, isJson: true };
+        return { text: response.text, isJson: true };
+    } catch (error) {
+        console.error("Error in getKnowledgeBase:", error);
+        throw error;
+    }
 };
 
 const getInterviewSummary = async (context: string): Promise<GeneratedArtifact> => {
     const prompt = `Atue como um UX Researcher. Resuma a entrevista em Markdown (Resumo, Insights, Necessidades, Citações). Contexto: ${context}`;
     try {
-        const response = await ai.models.generateContent({ model: "gemini-3-flash-preview", contents: prompt });
+        const response = await withRetry(() => ai.models.generateContent({ model: FLASH_MODEL, contents: prompt }));
         return { text: response.text };
     } catch (error) {
         console.error("Error in getInterviewSummary:", error);
@@ -281,7 +303,7 @@ const getInterviewSummary = async (context: string): Promise<GeneratedArtifact> 
 const getMOTables = async (context: string): Promise<GeneratedArtifact> => {
     const prompt = `Atue como um Engenheiro do Conhecimento (CommonKADS). Gere tabelas MO1 e MO5 em Markdown (Problemas, Contexto, Fatores Externos, Soluções, Aplicabilidades, Riscos, Ações). Use NEGRITO nos títulos. Contexto: ${context}`;
     try {
-        const response = await ai.models.generateContent({ model: "gemini-3-flash-preview", contents: prompt });
+        const response = await withRetry(() => ai.models.generateContent({ model: FLASH_MODEL, contents: prompt }));
         return { text: response.text };
     } catch (error) {
         console.error("Error in getMOTables:", error);
@@ -293,16 +315,18 @@ const getUserJourney = async (context: string): Promise<GeneratedArtifact> => {
     const identificationPrompt = `Identifique Personas (JSON array {name, role}). Contexto: ${context}`;
     let targets: { name: string; role: string }[] = [];
     try {
-        const idResponse = await ai.models.generateContent({ model: "gemini-3-flash-preview", contents: identificationPrompt, config: { responseMimeType: "application/json" } });
+        const idResponse = await withRetry(() => ai.models.generateContent({ model: FLASH_MODEL, contents: identificationPrompt, config: { responseMimeType: "application/json" } }));
         const parsed = safeParseJson(idResponse.text);
         if (parsed) targets = parsed;
-    } catch (e) {}
+    } catch (e) {
+        console.error("Error identifying personas for User Journey:", e);
+    }
     if (targets.length === 0) targets.push({ name: "Usuário Padrão", role: "Principal" });
     let fullMarkdown = "";
     for (const target of targets) {
         const prompt = `Crie Jornada do Usuário (Gibbons) para: ${target.name}. Contexto: ${context}`;
         try {
-            const response = await ai.models.generateContent({ model: "gemini-3.1-pro-preview", contents: prompt });
+            const response = await withRetry(() => ai.models.generateContent({ model: PRO_MODEL, contents: prompt }));
             fullMarkdown += `## Jornada: ${target.name}\n\n${response.text}\n\n---\n\n`;
         } catch (err) {
             console.error("Error in getUserJourney for target:", target.name, err);
@@ -322,7 +346,7 @@ const getHypotheses = async (context: string): Promise<GeneratedArtifact> => {
  
     Contexto: ${context}`;
     try {
-        const response = await ai.models.generateContent({ model: "gemini-3.1-pro-preview", contents: prompt });
+        const response = await withRetry(() => ai.models.generateContent({ model: PRO_MODEL, contents: prompt }));
         return { text: response.text };
     } catch (error) {
         console.error("Error in getHypotheses:", error);
@@ -343,7 +367,7 @@ const getFunctionalRequirements = async (context: string): Promise<GeneratedArti
     Contexto do Projeto:
     ${context}`;
     try {
-        const response = await ai.models.generateContent({ model: "gemini-3.1-pro-preview", contents: prompt });
+        const response = await withRetry(() => ai.models.generateContent({ model: PRO_MODEL, contents: prompt }));
         return { text: response.text };
     } catch (error) {
         console.error("Error in getFunctionalRequirements:", error);
@@ -354,7 +378,7 @@ const getFunctionalRequirements = async (context: string): Promise<GeneratedArti
 const getTaskModel = async (context: string): Promise<GeneratedArtifact> => {
     const prompt = `Crie o Modelo de Tarefas (CommonKADS MT1). Contexto: ${context}`;
     try {
-        const response = await ai.models.generateContent({ model: "gemini-3.1-pro-preview", contents: prompt });
+        const response = await withRetry(() => ai.models.generateContent({ model: PRO_MODEL, contents: prompt }));
         return { text: response.text };
     } catch (error) {
         console.error("Error in getTaskModel:", error);
@@ -365,11 +389,11 @@ const getTaskModel = async (context: string): Promise<GeneratedArtifact> => {
 const getUserFlows = async (context: string): Promise<GeneratedArtifact> => {
     const prompt = `Identifique módulos e gere diagramas Mermaid (graph TD) em JSON [{title, code}]. Contexto: ${context}`;
     try {
-        const response = await ai.models.generateContent({
-            model: "gemini-3.1-pro-preview",
+        const response = await withRetry(() => ai.models.generateContent({
+            model: PRO_MODEL,
             contents: prompt,
             config: { responseMimeType: "application/json" }
-        });
+        }));
         const parsed = safeParseJson(response.text);
         if (Array.isArray(parsed)) {
             const artifacts = parsed.map((item: any) => ({ title: item.title, content: cleanMermaidCode(item.code || ""), type: 'mermaid' as const }));
@@ -406,7 +430,7 @@ const getTestCases = async (context: string): Promise<GeneratedArtifact> => {
     Contexto do Projeto:
     ${context}`;
     try {
-        const response = await ai.models.generateContent({ model: "gemini-3.1-pro-preview", contents: prompt });
+        const response = await withRetry(() => ai.models.generateContent({ model: PRO_MODEL, contents: prompt }));
         return { text: response.text };
     } catch (error) {
         console.error("Error in getTestCases:", error);
@@ -437,7 +461,7 @@ const getMentorPlan = async (context: string): Promise<GeneratedArtifact> => {
     Contexto do Projeto:
     ${context}`;
     try {
-        const response = await ai.models.generateContent({ model: "gemini-3.1-pro-preview", contents: prompt });
+        const response = await withRetry(() => ai.models.generateContent({ model: PRO_MODEL, contents: prompt }));
         return { text: response.text };
     } catch (error) {
         console.error("Error in getMentorPlan:", error);
@@ -460,10 +484,10 @@ export const refineArtifact = async (artifactType: ArtifactType, currentContent:
     Retorne o artefato completo e atualizado.`;
 
     try {
-        const response = await ai.models.generateContent({ 
-            model: "gemini-3.1-pro-preview", 
+        const response = await withRetry(() => ai.models.generateContent({ 
+            model: PRO_MODEL, 
             contents: prompt 
-        });
+        }));
         
         return { text: response.text };
     } catch (error) {
