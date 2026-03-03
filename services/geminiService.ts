@@ -12,15 +12,18 @@ const ai = new GoogleGenAI({ apiKey: API_KEY });
 const FLASH_MODEL = "gemini-flash-latest";
 const PRO_MODEL = "gemini-3.1-pro-preview";
 
-const withRetry = async <T>(fn: () => Promise<T>, retries = 3, delay = 2000): Promise<T> => {
+const withRetry = async <T>(fn: () => Promise<T>, retries = 5, delay = 5000): Promise<T> => {
     try {
         return await fn();
     } catch (error: any) {
-        const is503 = error?.message?.includes('503') || error?.status === 503;
-        if (is503 && retries > 0) {
-            console.warn(`Model busy (503). Retrying in ${delay}ms... (${retries} attempts left)`);
+        const isRateLimit = error?.message?.includes('429') || error?.status === 429;
+        const isBusy = error?.message?.includes('503') || error?.status === 503;
+        
+        if ((isRateLimit || isBusy) && retries > 0) {
+            const reason = isRateLimit ? "Quota/Rate limit (429)" : "Model busy (503)";
+            console.warn(`${reason}. Retrying in ${delay}ms... (${retries} attempts left)`);
             await new Promise(resolve => setTimeout(resolve, delay));
-            return withRetry(fn, retries - 1, delay * 2);
+            return withRetry(fn, retries - 1, delay * 1.5);
         }
         throw error;
     }
@@ -247,7 +250,7 @@ const getKnowledgeInventory = async (context: string): Promise<GeneratedArtifact
     
     try {
         const response = await withRetry(() => ai.models.generateContent({ 
-            model: PRO_MODEL, 
+            model: FLASH_MODEL, 
             contents: prompt 
         }));
         return { text: response.text };
@@ -326,7 +329,7 @@ const getUserJourney = async (context: string): Promise<GeneratedArtifact> => {
     for (const target of targets) {
         const prompt = `Crie Jornada do Usuário (Gibbons) para: ${target.name}. Contexto: ${context}`;
         try {
-            const response = await withRetry(() => ai.models.generateContent({ model: PRO_MODEL, contents: prompt }));
+            const response = await withRetry(() => ai.models.generateContent({ model: FLASH_MODEL, contents: prompt }));
             fullMarkdown += `## Jornada: ${target.name}\n\n${response.text}\n\n---\n\n`;
         } catch (err) {
             console.error("Error in getUserJourney for target:", target.name, err);
@@ -346,7 +349,7 @@ const getHypotheses = async (context: string): Promise<GeneratedArtifact> => {
  
     Contexto: ${context}`;
     try {
-        const response = await withRetry(() => ai.models.generateContent({ model: PRO_MODEL, contents: prompt }));
+        const response = await withRetry(() => ai.models.generateContent({ model: FLASH_MODEL, contents: prompt }));
         return { text: response.text };
     } catch (error) {
         console.error("Error in getHypotheses:", error);
@@ -367,7 +370,7 @@ const getFunctionalRequirements = async (context: string): Promise<GeneratedArti
     Contexto do Projeto:
     ${context}`;
     try {
-        const response = await withRetry(() => ai.models.generateContent({ model: PRO_MODEL, contents: prompt }));
+        const response = await withRetry(() => ai.models.generateContent({ model: FLASH_MODEL, contents: prompt }));
         return { text: response.text };
     } catch (error) {
         console.error("Error in getFunctionalRequirements:", error);
@@ -378,7 +381,7 @@ const getFunctionalRequirements = async (context: string): Promise<GeneratedArti
 const getTaskModel = async (context: string): Promise<GeneratedArtifact> => {
     const prompt = `Crie o Modelo de Tarefas (CommonKADS MT1). Contexto: ${context}`;
     try {
-        const response = await withRetry(() => ai.models.generateContent({ model: PRO_MODEL, contents: prompt }));
+        const response = await withRetry(() => ai.models.generateContent({ model: FLASH_MODEL, contents: prompt }));
         return { text: response.text };
     } catch (error) {
         console.error("Error in getTaskModel:", error);
@@ -390,7 +393,7 @@ const getUserFlows = async (context: string): Promise<GeneratedArtifact> => {
     const prompt = `Identifique módulos e gere diagramas Mermaid (graph TD) em JSON [{title, code}]. Contexto: ${context}`;
     try {
         const response = await withRetry(() => ai.models.generateContent({
-            model: PRO_MODEL,
+            model: FLASH_MODEL,
             contents: prompt,
             config: { responseMimeType: "application/json" }
         }));
@@ -430,7 +433,7 @@ const getTestCases = async (context: string): Promise<GeneratedArtifact> => {
     Contexto do Projeto:
     ${context}`;
     try {
-        const response = await withRetry(() => ai.models.generateContent({ model: PRO_MODEL, contents: prompt }));
+        const response = await withRetry(() => ai.models.generateContent({ model: FLASH_MODEL, contents: prompt }));
         return { text: response.text };
     } catch (error) {
         console.error("Error in getTestCases:", error);
@@ -461,7 +464,7 @@ const getMentorPlan = async (context: string): Promise<GeneratedArtifact> => {
     Contexto do Projeto:
     ${context}`;
     try {
-        const response = await withRetry(() => ai.models.generateContent({ model: PRO_MODEL, contents: prompt }));
+        const response = await withRetry(() => ai.models.generateContent({ model: FLASH_MODEL, contents: prompt }));
         return { text: response.text };
     } catch (error) {
         console.error("Error in getMentorPlan:", error);
@@ -485,7 +488,7 @@ export const refineArtifact = async (artifactType: ArtifactType, currentContent:
 
     try {
         const response = await withRetry(() => ai.models.generateContent({ 
-            model: PRO_MODEL, 
+            model: FLASH_MODEL, 
             contents: prompt 
         }));
         
