@@ -65,8 +65,9 @@ const cleanMermaidCode = (code: string): string => {
     let clean = code
         .replace(/```mermaid/gi, '')
         .replace(/```/g, '')
-        .replace(/<br\s*\/?>/gi, '\\n')
+        .replace(/<br\s*\/?>/gi, ' ')
         .replace(/<[^>]*>/g, '');
+    
     clean = clean.trim();
     const lines = clean.split('\n');
     const keywords = ['graph', 'flowchart', 'sequenceDiagram', 'classDiagram', 'stateDiagram', 'stateDiagram-v2', 'erDiagram', 'gantt', 'pie', 'journey', 'mindmap', 'timeline'];
@@ -78,11 +79,22 @@ const cleanMermaidCode = (code: string): string => {
         break;
       }
     }
+    
     if (startLineIndex !== -1) {
       clean = lines.slice(startLineIndex).join('\n');
-    } else if (clean.includes('-->') || clean.includes('---')) {
+    } else {
         clean = 'graph TD\n' + clean;
     }
+    
+    // Ensure node labels with special characters are quoted
+    // This regex looks for node definitions like A[Text] and wraps the text in quotes if it contains special chars
+    clean = clean.replace(/([A-Za-z0-9_]+)\[(.*?)\]/g, (match, id, label) => {
+        if (label.includes('/') || label.includes('(') || label.includes(')') || label.includes('&') || label.includes('-')) {
+            return `${id}["${label.replace(/"/g, "'")}"]`;
+        }
+        return match;
+    });
+
     clean = clean.replace(/`/g, "'");
     return clean.trim();
 };
@@ -144,9 +156,12 @@ const getEmpathyMap = async (context: string): Promise<GeneratedArtifact> => {
     }
     if (targets.length === 0) targets.push({ name: "Usuário Típico", role: "Usuário Principal" });
     let fullMarkdown = "# Mapas de Empatia\n\n";
-    let firstImageUrl: string | undefined = undefined;
+    
     for (const target of targets) {
-        const dataPrompt = `Crie um Mapa de Empatia detalhado (JSON: see, hear, thinkAndFeel, sayAndDo, pains, gains) para: ${target.name}. Contexto: ${context}`;
+        const dataPrompt = `Crie um Mapa de Empatia detalhado (JSON: see, hear, thinkAndFeel, sayAndDo, pains, gains) para: ${target.name}. 
+        IMPORTANTE: Todos os campos DEVEM conter informações baseadas no contexto. NÃO retorne campos vazios ou nulos. 
+        Contexto: ${context}`;
+        
         let empathyData: any = {};
         try {
             const response = await withRetry(() => ai.models.generateContent({
@@ -160,21 +175,15 @@ const getEmpathyMap = async (context: string): Promise<GeneratedArtifact> => {
             console.error(`Error generating empathy data for ${target.name}:`, error);
             continue; 
         }
-        const imagePrompt = `UX Empathy Map diagram for persona: "${target.name}". sticky notes, professional, 4k.`;
-        let currentImageUrl: string | null = null;
-        try {
-            const imageResponse = await withRetry(() => ai.models.generateContent({ model: 'gemini-2.5-flash-image', contents: { parts: [{ text: imagePrompt }] } }));
-            if (imageResponse.candidates?.[0].content.parts) {
-                for (const part of imageResponse.candidates[0].content.parts) {
-                    if (part.inlineData) { currentImageUrl = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`; if (!firstImageUrl) firstImageUrl = currentImageUrl; break; }
-                }
-            }
-        } catch (e) {
-            console.error(`Error generating image for ${target.name}:`, e);
-        }
-        fullMarkdown += `## Persona: ${target.name}\n${currentImageUrl ? `\n![Mapa de Empatia](${currentImageUrl})\n` : ""}\n### 1. VÊ\n${empathyData.see?.map((i: string) => `- ${i}`).join('\n')}\n### 2. OUVE\n${empathyData.hear?.map((i: string) => `- ${i}`).join('\n')}\n### 3. PENSA/SENTE\n${empathyData.thinkAndFeel?.map((i: string) => `- ${i}`).join('\n')}\n### 4. FALA/FAZ\n${empathyData.sayAndDo?.map((i: string) => `- ${i}`).join('\n')}\n### 5. DORES\n${empathyData.pains?.map((i: string) => `- ${i}`).join('\n')}\n### 6. GANHOS\n${empathyData.gains?.map((i: string) => `- ${i}`).join('\n')}\n---\n`;
+
+        const formatList = (items: string[] | undefined) => {
+            if (!items || items.length === 0) return "- Informação não disponível no contexto.";
+            return items.map((i: string) => `- ${i}`).join('\n');
+        };
+
+        fullMarkdown += `## Persona: ${target.name}\n\n### 1. VÊ\n${formatList(empathyData.see)}\n### 2. OUVE\n${formatList(empathyData.hear)}\n### 3. PENSA/SENTE\n${formatList(empathyData.thinkAndFeel)}\n### 4. FALA/FAZ\n${formatList(empathyData.sayAndDo)}\n### 5. DORES\n${formatList(empathyData.pains)}\n### 6. GANHOS\n${formatList(empathyData.gains)}\n\n---\n\n`;
     }
-    return { text: fullMarkdown.trim(), imageUrl: firstImageUrl };
+    return { text: fullMarkdown.trim() };
 };
 
 const generatePersonaImage = async (visualDescription: string): Promise<string | null> => {
@@ -211,7 +220,8 @@ const getPersona = async (context: string): Promise<GeneratedArtifact> => {
 };
 
 const getAgentModel = async (context: string): Promise<GeneratedArtifact> => {
-    const prompt = `Atue como um Engenheiro do Conhecimento (CommonKADS). Gere o Modelo de Agentes (Papel, Envolvidos, Comunicação, Conhecimento, Competências, Responsabilidades). SEM NOMES PRÓPRIOS. Contexto: ${context}`;
+    const prompt = `Atue como um Engenheiro do Conhecimento (CommonKADS). Gere o Modelo de Agentes (Papel, Envolvidos, Comunicação, Conhecimento, Competências, Responsabilidades). 
+    SEM NOMES PRÓPRIOS. NÃO use tabelas, use apenas uma estrutura vertical de títulos e parágrafos. Contexto: ${context}`;
     try {
         const response = await withRetry(() => ai.models.generateContent({ model: FLASH_MODEL, contents: prompt }));
         return { text: response.text };
@@ -266,12 +276,11 @@ const getKnowledgeBase = async (context: string): Promise<GeneratedArtifact> => 
     
     Regras estritas:
     1. O resultado deve ser um objeto JSON único e bem formatado.
-    2. Adicione ao INÍCIO do JSON o campo "instrucoes_geracao_ui" com o valor exato: "Gere as telas do sistema descrito neste arquivo Json, com o idioma em português/brasileiro (pt/BR)".
-    3. Inclua seções para Personas, Requisitos, Tarefas, Modelo de Agentes, etc. (conforme disponível no contexto).
-    4. NÃO inclua absolutamente nada relacionado com "Casos de Teste" nem com o "Plano Mentor/Mentorado".
-    5. NÃO inclua imagens ou links de dados base64.
-    6. Se houver diagramas de fluxo, extraia APENAS o código Mermaid puro.
-    7. Sintetize informações redundantes mantendo a fidelidade técnica.
+    2. Adicione ao INÍCIO do JSON o campo "instrucoes_geracao_ui" com o valor exato: "Gere as telas do sistema descrito neste arquivo Json, com o idioma em português/brasileiro (pt/BR), utilize boas práticas de UI, bom contraste e espaçamento entre os elementos visuais, a paleta de cores deve ter contraste e utilizar cores baseadas nas personas e mapa de empatia do contexto aqui armazenado. As telas e funcionalidades do sistema devem ser estritamente baseadas nas HIPÓTESES, respeitando o contexto armazenado nos requisitos funcionais, modelo de tarefas e fluxos de usuário".
+    3. Inclua seções para observação, entrevistas, personas, mapa de empatia, modelo organizacional, modelo de agentes, inventário do conhecimento, jornada do usuário, hipóteses, requisitos funcionais, modelo de tarefas e fluxos de usuário (conforme disponível no contexto).
+    4. NÃO inclua imagens ou links de dados base64.
+    5. Se houver diagramas de fluxo, extraia APENAS o código Mermaid puro.
+    6. Sintetize informações redundantes mantendo a fidelidade técnica.
     
     Contexto do Projeto:
     ${context}`;
@@ -304,7 +313,8 @@ const getInterviewSummary = async (context: string): Promise<GeneratedArtifact> 
 };
 
 const getMOTables = async (context: string): Promise<GeneratedArtifact> => {
-    const prompt = `Atue como um Engenheiro do Conhecimento (CommonKADS). Gere tabelas MO1 e MO5 em Markdown (Problemas, Contexto, Fatores Externos, Soluções, Aplicabilidades, Riscos, Ações). Use NEGRITO nos títulos. Contexto: ${context}`;
+    const prompt = `Atue como um Engenheiro do Conhecimento (CommonKADS). Gere as informações dos Modelos Organizacionais MO1 e MO5 em formato de lista vertical detalhada (Problemas, Contexto, Fatores Externos, Soluções, Aplicabilidades, Riscos, Ações). 
+    NÃO use tabelas em nenhuma circunstância. Use apenas títulos (##) e listas ou parágrafos. Use NEGRITO nos títulos das seções. Contexto: ${context}`;
     try {
         const response = await withRetry(() => ai.models.generateContent({ model: FLASH_MODEL, contents: prompt }));
         return { text: response.text };
@@ -362,10 +372,13 @@ const getFunctionalRequirements = async (context: string): Promise<GeneratedArti
     
     REGRAS ESTRITAS DE FORMATAÇÃO:
     1. Organize o conteúdo por módulos. Cada título de módulo deve começar com a linha: "Módulo: [Nome do Módulo]" (sem negrito no Markdown).
-    2. Para cada requisito, use the formato: **Requisito #X: [Título do Requisito]** (Onde X é o número sequencial). O número e o título devem estar em negrito.
-    3. Logo após a descrição de cada requisito, você DEVE gerar obrigatoriamente os "Critérios de Aceitação" no formato: "Critérios de Aceitação: Dado que <situação>, quando <ação>, então <resultado esperado>."
-    4. NÃO use negrito ou formatação especial na palavra "Critérios de Aceitação:".
-    5. NÃO use emojis. NÃO use tags HTML.
+    2. Para cada requisito, use o formato: **RFX: [Título do Requisito]** (Onde X é o número sequencial). O número e o título devem estar em negrito.
+    3. Em cada requisito, colocar uma descrição funcional do requisito funcional.
+    4. Antes da lista de RNs, adicione uma linha com o texto "Regras de Negócio:".
+    5. Após o texto "Regras de Negócio:", devem ser listadas as regras de negócio de cada requisito funcional, listando uma abaixo da outra no formato: **RNX.Y** (Onde o X é o número do RF atual e Y é o número sequencial da regra de negócio (RN) atual).
+    6. Logo após as RNs de cada requisito, você DEVE gerar obrigatoriamente os "Critérios de Aceitação" de BDD no formato: "Critérios de Aceitação: <Cenário>. Dado que <situação>, quando <ação>, então <resultado esperado>."
+    7. NÃO use negrito ou formatação especial na palavra "Critérios de Aceitação:" ou "Regras de Negócio:".
+    8. NÃO use emojis. NÃO use tags HTML.
     
     Contexto do Projeto:
     ${context}`;
@@ -379,7 +392,22 @@ const getFunctionalRequirements = async (context: string): Promise<GeneratedArti
 };
 
 const getTaskModel = async (context: string): Promise<GeneratedArtifact> => {
-    const prompt = `Crie o Modelo de Tarefas (CommonKADS MT1). Contexto: ${context}`;
+    const prompt = `Atue como um Engenheiro do Conhecimento (CommonKADS). Crie o Modelo de Tarefas (MT1).
+    
+    REGRAS ESTRITAS PARA O ITEM "2. Especificação das Tarefas":
+    1. NÃO use tabelas em nenhuma circunstância.
+    2. Use um formato de lista vertical, com cada tarefa e seus detalhes um abaixo do outro.
+    3. Siga exatamente este exemplo de formato para cada tarefa:
+    
+    **TX - [Nome da Tarefa]**
+    Agente: [nome do agente ou papel]
+    Insumos (input): [lista de insumos]
+    Produtos (output): [lista de produtos]
+    Conhecimento necessário: [descrição do conhecimento]
+    
+    (Substitua X pelo número da tarefa: T1, T2, etc.)
+    
+    Contexto: ${context}`;
     try {
         const response = await withRetry(() => ai.models.generateContent({ model: FLASH_MODEL, contents: prompt }));
         return { text: response.text };
@@ -390,7 +418,13 @@ const getTaskModel = async (context: string): Promise<GeneratedArtifact> => {
 };
 
 const getUserFlows = async (context: string): Promise<GeneratedArtifact> => {
-    const prompt = `Identifique módulos e gere diagramas Mermaid (graph TD) em JSON [{title, code}]. Contexto: ${context}`;
+    const prompt = `Identifique módulos e gere diagramas Mermaid (graph TD) em JSON [{title, code}]. 
+    REGRAS PARA O CÓDIGO MERMAID:
+    1. Use aspas duplas para rótulos de nós que contenham caracteres especiais (ex: A["WhatsApp / Telefone"]).
+    2. Garanta que todos os nós estejam conectados por setas (-->).
+    3. NÃO defina dois nós na mesma linha sem um link entre eles.
+    4. Use apenas 'graph TD'.
+    Contexto: ${context}`;
     try {
         const response = await withRetry(() => ai.models.generateContent({
             model: FLASH_MODEL,

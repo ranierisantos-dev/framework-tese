@@ -133,28 +133,49 @@ const categories = [
 const OptionSelector: React.FC<OptionSelectorProps> = ({ onSelect, completedArtifacts }) => {
 
     const getDependencyStatus = (type: ArtifactType) => {
+        // Se o artefato já foi concluído (ou carregado via JSON), ele deve estar sempre habilitado
+        if (completedArtifacts.includes(type)) {
+            return { disabled: false };
+        }
+
+        // Configurações e ferramentas básicas sempre habilitadas
+        if (type === ArtifactType.InitialSetup || type === ArtifactType.LoadKnowledgeBase || 
+            type === ArtifactType.Observation || type === ArtifactType.InterviewQuestions || 
+            type === ArtifactType.SummarizeInterview || type === ArtifactType.Personas || 
+            type === ArtifactType.EmpathyMap || type === ArtifactType.UserJourney || 
+            type === ArtifactType.HypothesisGeneration) {
+            return { disabled: false };
+        }
+
         if (type === ArtifactType.MOTables) {
-            const isCompleted = completedArtifacts.includes(ArtifactType.Observation) || completedArtifacts.includes(ArtifactType.SummarizeInterview);
+            const isCompleted = completedArtifacts.includes(ArtifactType.Observation) || 
+                               completedArtifacts.includes(ArtifactType.SummarizeInterview) ||
+                               completedArtifacts.includes(ArtifactType.KnowledgeBase);
             return { disabled: !isCompleted };
         }
         if (type === ArtifactType.AgentModel || type === ArtifactType.KnowledgeInventory) {
-            const isCompleted = completedArtifacts.includes(ArtifactType.Personas);
+            const isCompleted = completedArtifacts.includes(ArtifactType.Personas) || 
+                               completedArtifacts.includes(ArtifactType.KnowledgeBase);
             return { disabled: !isCompleted };
         }
-        if (type === ArtifactType.TaskModel || type === ArtifactType.FunctionalRequirements) {
-            const isCompleted = completedArtifacts.includes(ArtifactType.HypothesisGeneration);
+        if (type === ArtifactType.TaskModel || type === ArtifactType.FunctionalRequirements || type === ArtifactType.UserFlows) {
+            const isCompleted = completedArtifacts.includes(ArtifactType.HypothesisGeneration) || 
+                               completedArtifacts.includes(ArtifactType.KnowledgeBase);
             return { disabled: !isCompleted };
         }
         if (type === ArtifactType.KnowledgeBase) {
-             const isCompleted = completedArtifacts.includes(ArtifactType.HypothesisGeneration);
+             const isCompleted = completedArtifacts.includes(ArtifactType.HypothesisGeneration) || 
+                                completedArtifacts.includes(ArtifactType.FunctionalRequirements);
              return { disabled: !isCompleted };
         }
         if (type === ArtifactType.TestCases) {
-             const isCompleted = completedArtifacts.includes(ArtifactType.FunctionalRequirements);
+             const isCompleted = completedArtifacts.includes(ArtifactType.FunctionalRequirements) || 
+                                completedArtifacts.includes(ArtifactType.KnowledgeBase);
              return { disabled: !isCompleted };
         }
         if (type === ArtifactType.MonitoringPlan) {
-             const isCompleted = completedArtifacts.includes(ArtifactType.KnowledgeBase) || completedArtifacts.includes(ArtifactType.FunctionalRequirements);
+             const isCompleted = completedArtifacts.includes(ArtifactType.KnowledgeBase) || 
+                                completedArtifacts.includes(ArtifactType.FunctionalRequirements);
              return { disabled: !isCompleted };
         }
         return { disabled: false };

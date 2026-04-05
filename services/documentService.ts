@@ -19,13 +19,22 @@ const THEME = {
 const cleanTextForExport = (text: string): string => {
     if (!text) return "";
     
-    // 1. Remover tags HTML (ex: <br>, <div>, etc)
-    let cleaned = text.replace(/<[^>]*>/g, '');
+    // 1. Ignorar linhas que são puramente separadores de tabela (ex: |---| ou | :--- |)
+    if (text.trim().match(/^\|?[\s\-:|]+\|?$/) && text.includes('---')) {
+        return "";
+    }
+
+    // 2. Remover o caractere pipe (|) usado em tabelas e referências a "Tabela"
+    let cleaned = text.replace(/\|/g, ' ');
+    cleaned = cleaned.replace(/Tabela\s?\d*:?\s?/gi, ''); // Remove "Tabela 1:", "Tabela:", etc.
     
-    // 2. Remover Emojis usando regex de ranges Unicode
+    // 3. Remover tags HTML (ex: <br>, <div>, etc)
+    cleaned = cleaned.replace(/<[^>]*>/g, '');
+    
+    // 4. Remover Emojis usando regex de ranges Unicode
     cleaned = cleaned.replace(/([\u2700-\u27BF]|[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD10-\uDDFF])/g, '');
     
-    return cleaned;
+    return cleaned.trim();
 };
 
 export const generateAndDownloadDocx = async (title: string, subtitle: string, content: string) => {
@@ -110,6 +119,27 @@ export const generateAndDownloadDocx = async (title: string, subtitle: string, c
                 heading: HeadingLevel.HEADING_2,
                 spacing: { before: 240, after: 120 }
             }));
+        } else if (cleanedLine.startsWith('**RF') || cleanedLine.startsWith('**Requisito')) {
+            const content = cleanedLine.replace(/\*\*/g, '');
+            docChildren.push(new Paragraph({
+                children: [
+                    new TextRun({
+                        text: content,
+                        bold: true,
+                    })
+                ],
+                spacing: { before: 200, after: 100 }
+            }));
+        } else if (cleanedLine.startsWith('#### ')) {
+            docChildren.push(new Paragraph({
+                children: [
+                    new TextRun({
+                        text: cleanedLine.replace('#### ', ''),
+                        bold: true,
+                    })
+                ],
+                spacing: { before: 180, after: 90 }
+            }));
         } else if (cleanedLine.startsWith('### ')) {
             docChildren.push(new Paragraph({
                 text: cleanedLine.replace('### ', ''),
@@ -177,8 +207,19 @@ export const generateAndDownloadPdf = (title: string, subtitle: string, content:
 
     const checkPageBreak = (heightNeeded: number) => {
         if (yPos + heightNeeded > pageHeight - margin) {
+            // Salva o estado atual da fonte para restaurar após desenhar o cabeçalho da nova página
+            const fontSize = doc.getFontSize();
+            const font = doc.getFont();
+            const textColor = doc.getTextColor();
+
             doc.addPage();
             drawPageBackground();
+            
+            // Restaura o estado da fonte
+            doc.setFontSize(fontSize);
+            doc.setFont(font.fontName, font.fontStyle);
+            doc.setTextColor(textColor);
+
             yPos = 30;
             return true;
         }
@@ -260,46 +301,87 @@ export const generateAndDownloadPdf = (title: string, subtitle: string, content:
 
         // Título do Módulo (Laranja)
         if (cleanedLine.startsWith('Módulo:') || cleanedLine.startsWith('MÓDULO:')) {
-            checkPageBreak(HEADER_2_SIZE + 5);
             doc.setFont("helvetica", "bold");
             doc.setFontSize(HEADER_2_SIZE);
             doc.setTextColor(THEME.accent[0], THEME.accent[1], THEME.accent[2]); 
-            doc.text(cleanedLine, margin, yPos);
-            yPos += HEADER_2_SIZE;
+            
+            const splitMod = doc.splitTextToSize(cleanedLine, maxLineWidth);
+            checkPageBreak((splitMod.length * HEADER_2_SIZE) + 5);
+            
+            splitMod.forEach((mLine: string) => {
+                doc.text(mLine, margin, yPos);
+                yPos += HEADER_2_SIZE * 0.8;
+            });
+            yPos += 5;
             return;
         }
 
         // Cabeçalhos (Hierarquia)
         if (cleanedLine.startsWith('# ')) {
             const textToPrint = cleanedLine.replace('# ', '').replace(/\*\*/g, '');
-            checkPageBreak(HEADER_1_SIZE);
             doc.setFont("helvetica", "bold");
             doc.setFontSize(HEADER_1_SIZE);
             doc.setTextColor(THEME.textBold[0], THEME.textBold[1], THEME.textBold[2]);
-            doc.text(textToPrint, margin, yPos + 4);
-            yPos += HEADER_1_SIZE;
+            
+            const splitH1 = doc.splitTextToSize(textToPrint, maxLineWidth);
+            checkPageBreak(splitH1.length * HEADER_1_SIZE);
+            
+            splitH1.forEach((hLine: string) => {
+                doc.text(hLine, margin, yPos + 4);
+                yPos += HEADER_1_SIZE * 0.8;
+            });
+            yPos += 4;
             return;
         } 
         
         if (cleanedLine.startsWith('## ')) {
             const textToPrint = cleanedLine.replace('## ', '').replace(/\*\*/g, '');
-            checkPageBreak(HEADER_2_SIZE);
             doc.setFont("helvetica", "bold");
             doc.setFontSize(HEADER_2_SIZE);
             doc.setTextColor(THEME.textBold[0], THEME.textBold[1], THEME.textBold[2]);
-            doc.text(textToPrint, margin, yPos + 3);
-            yPos += HEADER_2_SIZE;
+            
+            const splitH2 = doc.splitTextToSize(textToPrint, maxLineWidth);
+            checkPageBreak(splitH2.length * HEADER_2_SIZE);
+            
+            splitH2.forEach((hLine: string) => {
+                doc.text(hLine, margin, yPos + 3);
+                yPos += HEADER_2_SIZE * 0.8;
+            });
+            yPos += 3;
+            return;
+        }
+
+        if (cleanedLine.startsWith('#### ')) {
+            const textToPrint = cleanedLine.replace('#### ', '').replace(/\*\*/g, '');
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(BODY_FONT_SIZE);
+            doc.setTextColor(THEME.textBold[0], THEME.textBold[1], THEME.textBold[2]);
+            
+            const splitH4 = doc.splitTextToSize(textToPrint, maxLineWidth);
+            checkPageBreak(splitH4.length * BODY_FONT_SIZE);
+            
+            splitH4.forEach((hLine: string) => {
+                doc.text(hLine, margin, yPos + 2);
+                yPos += BODY_FONT_SIZE * 0.8;
+            });
+            yPos += 2;
             return;
         }
 
         if (cleanedLine.startsWith('### ')) {
             const textToPrint = cleanedLine.replace('### ', '').replace(/\*\*/g, '');
-            checkPageBreak(HEADER_3_SIZE);
             doc.setFont("helvetica", "bold");
             doc.setFontSize(HEADER_3_SIZE);
             doc.setTextColor(THEME.textBold[0], THEME.textBold[1], THEME.textBold[2]);
-            doc.text(textToPrint, margin, yPos + 2);
-            yPos += HEADER_3_SIZE;
+            
+            const splitH3 = doc.splitTextToSize(textToPrint, maxLineWidth);
+            checkPageBreak(splitH3.length * HEADER_3_SIZE);
+            
+            splitH3.forEach((hLine: string) => {
+                doc.text(hLine, margin, yPos + 2);
+                yPos += HEADER_3_SIZE * 0.8;
+            });
+            yPos += 2;
             return;
         }
 
@@ -308,6 +390,7 @@ export const generateAndDownloadPdf = (title: string, subtitle: string, content:
         
         // Detecta padrão de rótulo em negrito (**Chave:** Conteúdo)
         const boldHeaderMatch = cleanedLine.match(/^\*\*(.*?)\*\*:(.*)$/);
+        const fullBoldMatch = cleanedLine.match(/^\*\*(.*?)\*\*$/);
         
         if (boldHeaderMatch) {
             const label = boldHeaderMatch[1] + ":";
@@ -342,6 +425,21 @@ export const generateAndDownloadPdf = (title: string, subtitle: string, content:
                 yPos += lineHeight;
             }
             
+            yPos += 2;
+            return;
+        }
+
+        if (fullBoldMatch) {
+            const content = fullBoldMatch[1];
+            doc.setFont("helvetica", "bold");
+            doc.setTextColor(THEME.textBold[0], THEME.textBold[1], THEME.textBold[2]);
+            
+            const splitContent = doc.splitTextToSize(content, maxLineWidth);
+            splitContent.forEach((cl: string) => {
+                checkPageBreak(lineHeight);
+                doc.text(cl, margin, yPos);
+                yPos += lineHeight;
+            });
             yPos += 2;
             return;
         }

@@ -10,6 +10,7 @@ import ChatMessage from './components/ChatMessage';
 import AdditionalInfoForm from './components/AdditionalInfoForm';
 import DownloadOptions from './components/DownloadOptions';
 import HypothesisEditor from './components/HypothesisEditor';
+import ArtifactEditor from './components/ArtifactEditor';
 import SetupForm from './components/SetupForm';
 import KnowledgeUpload from './components/KnowledgeUpload';
 import RefinementForm from './components/RefinementForm';
@@ -29,6 +30,8 @@ const App: React.FC = () => {
     const handleTaskModelTriggerRef = useRef<() => void>(null);
     const handleFunctionalRequirementsTriggerRef = useRef<() => void>(null);
     const handleHypothesisRefinementRef = useRef<((content: string) => void) | null>(null);
+    const handleFunctionalRequirementsFinalizedRef = useRef<((content: string) => void) | null>(null);
+    const handleTestCasesFinalizedRef = useRef<((content: string) => void) | null>(null);
 
     const stateRef = useRef({ projectContext, completedArtifacts, currentArtifactType });
     useEffect(() => {
@@ -45,13 +48,13 @@ const App: React.FC = () => {
         setMessages(prev => prev.map(m => m.id === id ? { ...m, content, ...extra } : m));
     }, []);
 
-    const showMainMenu = useCallback((customText?: string) => {
+    const showMainMenu = useCallback((customText?: string, overrideArtifacts?: ArtifactType[]) => {
         addMessage('bot', 
             <>
                 <p className="mb-4 text-gray-200">{customText || "O que você gostaria de fazer agora?"}</p>
                 <OptionSelector 
                     onSelect={(type) => handleOptionSelectRef.current?.(type)} 
-                    completedArtifacts={stateRef.current.completedArtifacts} 
+                    completedArtifacts={overrideArtifacts || stateRef.current.completedArtifacts} 
                 />
             </>,
             true // Ativa largura total para o menu
@@ -86,7 +89,23 @@ const App: React.FC = () => {
 
     const handleHypothesisFinalized = useCallback((finalContent: string) => {
         const artifactType = ArtifactType.HypothesisGeneration;
-        setProjectContext(prev => `${prev}\n\n--- HIPÓTESES DEFINIDAS (FINAL) ---\n${finalContent}`);
+        setProjectContext(prev => {
+            if (!prev.trim()) return `## ${artifactType} (FINAL)\n\n${finalContent}`;
+
+            // Remove any previous hypothesis sections to ensure only the latest confirmed one is used
+            const sections = prev.split('\n\n---\n\n');
+            const filteredSections = sections.filter(section => 
+                section.trim() !== '' &&
+                !section.includes(`## ${artifactType}`) && 
+                !section.includes('--- HIPÓTESES DEFINIDAS (FINAL) ---') &&
+                !section.includes(`--- REFINAMENTO: ${artifactType} ---`)
+            );
+            
+            const newSection = `## ${artifactType} (FINAL)\n\n${finalContent}`;
+            return filteredSections.length > 0 
+                ? `${filteredSections.join('\n\n---\n\n')}\n\n---\n\n${newSection}`
+                : newSection;
+        });
         addMessage('bot', 
             <>
                 <p className="text-sm text-gray-400 mb-2">Hipóteses confirmadas. Deseja salvar este artefato?</p>
@@ -127,9 +146,55 @@ const App: React.FC = () => {
             const result = await refineArtifact(type, currentContent, suggestions);
             const textWithoutImages = result.text.replace(/!\[(.*?)\]\(data:image\/.*?;base64,.*?\)/g, '\n> [Imagem Gerada: $1]\n');
             
-            setProjectContext(prev => `${prev}\n\n--- REFINAMENTO: ${type} ---\n${textWithoutImages}`);
+            if (type === ArtifactType.HypothesisGeneration || type === ArtifactType.FunctionalRequirements || type === ArtifactType.TestCases) {
+                setProjectContext(prev => {
+                    if (!prev.trim()) return `--- REFINAMENTO: ${type} ---\n${textWithoutImages}`;
+                    const sections = prev.split('\n\n---\n\n');
+                    const filteredSections = sections.filter(section => 
+                        section.trim() !== '' &&
+                        !section.includes(`## ${type}`) && 
+                        !section.includes('--- HIPÓTESES DEFINIDAS (FINAL) ---') &&
+                        !section.includes('--- REQUISITOS FUNCIONAIS (FINAL) ---') &&
+                        !section.includes('--- CASOS DE TESTE (FINAL) ---') &&
+                        !section.includes(`--- REFINAMENTO: ${type} ---`)
+                    );
+                    const newSection = `--- REFINAMENTO: ${type} ---\n${textWithoutImages}`;
+                    return filteredSections.length > 0 
+                        ? `${filteredSections.join('\n\n---\n\n')}\n\n---\n\n${newSection}`
+                        : newSection;
+                });
+            } else {
+                setProjectContext(prev => `${prev}\n\n--- REFINAMENTO: ${type} ---\n${textWithoutImages}`);
+            }
             
             const isWide = type === ArtifactType.UserFlows || type === ArtifactType.KnowledgeBase;
+            
+            if (type === ArtifactType.FunctionalRequirements) {
+                updateMessage(loadingId, 
+                    <ArtifactEditor 
+                        title={type} 
+                        initialContent={result.text} 
+                        onSave={(content) => handleFunctionalRequirementsFinalizedRef.current?.(content)} 
+                    />, 
+                    { isFullWidth: true }
+                );
+                setIsLoading(false);
+                return;
+            }
+
+            if (type === ArtifactType.TestCases) {
+                updateMessage(loadingId, 
+                    <ArtifactEditor 
+                        title={type} 
+                        initialContent={result.text} 
+                        onSave={(content) => handleTestCasesFinalizedRef.current?.(content)} 
+                    />, 
+                    { isFullWidth: true }
+                );
+                setIsLoading(false);
+                return;
+            }
+
             updateMessage(loadingId, <ArtifactDisplay artifact={result} />, { isFullWidth: isWide });
             
             const newCompletedArtifacts = [...stateRef.current.completedArtifacts];
@@ -160,6 +225,98 @@ const App: React.FC = () => {
         }
     }, [addMessage, updateMessage, showMainMenu]);
 
+    const handleFunctionalRequirementsFinalized = useCallback((finalContent: string) => {
+        const artifactType = ArtifactType.FunctionalRequirements;
+        setProjectContext(prev => {
+            if (!prev.trim()) return `## ${artifactType} (FINAL)\n\n${finalContent}`;
+
+            const sections = prev.split('\n\n---\n\n');
+            const filteredSections = sections.filter(section => 
+                section.trim() !== '' &&
+                !section.includes(`## ${artifactType}`) && 
+                !section.includes('--- REQUISITOS FUNCIONAIS (FINAL) ---') &&
+                !section.includes(`--- REFINAMENTO: ${artifactType} ---`)
+            );
+            
+            const newSection = `## ${artifactType} (FINAL)\n\n${finalContent}`;
+            return filteredSections.length > 0 
+                ? `${filteredSections.join('\n\n---\n\n')}\n\n---\n\n${newSection}`
+                : newSection;
+        });
+        
+        addMessage('bot', 
+            <div className="space-y-4">
+                <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-400 font-medium">
+                    <span className="mr-2">✓</span> {artifactType} finalizados com sucesso!
+                </div>
+                <p className="text-sm text-gray-400">O conteúdo está pronto para download nos formatos abaixo:</p>
+                <DownloadOptions artifactName={artifactType} content={finalContent} />
+                
+                <RefinementForm 
+                    onRefine={(s) => handleRefine(artifactType, finalContent, s)}
+                    onAccept={() => {
+                        addMessage('bot', 
+                            <div className="pt-4 border-t border-white/10">
+                                <p className="mb-4 text-gray-200">O que você gostaria de fazer agora?</p>
+                                <OptionSelector onSelect={(type) => handleOptionSelectRef.current?.(type)} completedArtifacts={stateRef.current.completedArtifacts} />
+                            </div>
+                        );
+                    }}
+                />
+            </div>
+        );
+    }, [addMessage, handleRefine]);
+
+    useEffect(() => {
+        handleFunctionalRequirementsFinalizedRef.current = handleFunctionalRequirementsFinalized;
+    }, [handleFunctionalRequirementsFinalized]);
+
+    const handleTestCasesFinalized = useCallback((finalContent: string) => {
+        const artifactType = ArtifactType.TestCases;
+        setProjectContext(prev => {
+            if (!prev.trim()) return `## ${artifactType} (FINAL)\n\n${finalContent}`;
+
+            const sections = prev.split('\n\n---\n\n');
+            const filteredSections = sections.filter(section => 
+                section.trim() !== '' &&
+                !section.includes(`## ${artifactType}`) && 
+                !section.includes('--- CASOS DE TESTE (FINAL) ---') &&
+                !section.includes(`--- REFINAMENTO: ${artifactType} ---`)
+            );
+            
+            const newSection = `## ${artifactType} (FINAL)\n\n${finalContent}`;
+            return filteredSections.length > 0 
+                ? `${filteredSections.join('\n\n---\n\n')}\n\n---\n\n${newSection}`
+                : newSection;
+        });
+        
+        addMessage('bot', 
+            <div className="space-y-4">
+                <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-400 font-medium">
+                    <span className="mr-2">✓</span> {artifactType} finalizados com sucesso!
+                </div>
+                <p className="text-sm text-gray-400">O conteúdo está pronto para download nos formatos abaixo:</p>
+                <DownloadOptions artifactName={artifactType} content={finalContent} />
+                
+                <RefinementForm 
+                    onRefine={(s) => handleRefine(artifactType, finalContent, s)}
+                    onAccept={() => {
+                        addMessage('bot', 
+                            <div className="pt-4 border-t border-white/10">
+                                <p className="mb-4 text-gray-200">O que você gostaria de fazer agora?</p>
+                                <OptionSelector onSelect={(type) => handleOptionSelectRef.current?.(type)} completedArtifacts={stateRef.current.completedArtifacts} />
+                            </div>
+                        );
+                    }}
+                />
+            </div>
+        );
+    }, [addMessage, handleRefine]);
+
+    useEffect(() => {
+        handleTestCasesFinalizedRef.current = handleTestCasesFinalized;
+    }, [handleTestCasesFinalized]);
+
     const handleGeneration = useCallback(async (artifactType: ArtifactType, context: string, isPrimaryInput: boolean) => {
         setIsLoading(true);
         const loadingMessageId = addMessage('bot', <LoadingSpinner />);
@@ -176,8 +333,12 @@ const App: React.FC = () => {
             const result: GeneratedArtifact = await generateArtifact(artifactType, context);
             const textWithoutImages = result.text.replace(/!\[(.*?)\]\(data:image\/.*?;base64,.*?\)/g, '\n> [Imagem Gerada: $1]\n');
             
-            if (isPrimaryInput) { setProjectContext(`## ${artifactType}\n\n${textWithoutImages}`); } 
-            else { setProjectContext(prev => `${prev}\n\n---\n\n## ${artifactType}\n\n${textWithoutImages}`); }
+            if (artifactType !== ArtifactType.HypothesisGeneration && 
+                artifactType !== ArtifactType.FunctionalRequirements && 
+                artifactType !== ArtifactType.TestCases) {
+                if (isPrimaryInput) { setProjectContext(`## ${artifactType}\n\n${textWithoutImages}`); } 
+                else { setProjectContext(prev => `${prev}\n\n---\n\n## ${artifactType}\n\n${textWithoutImages}`); }
+            }
             
             const newCompletedArtifacts = [...stateRef.current.completedArtifacts, artifactType];
             setCompletedArtifacts(newCompletedArtifacts);
@@ -187,35 +348,27 @@ const App: React.FC = () => {
                 return; 
             }
 
-            if (artifactType === ArtifactType.FunctionalRequirements || artifactType === ArtifactType.TestCases) {
+            if (artifactType === ArtifactType.FunctionalRequirements) {
                 updateMessage(loadingMessageId, 
-                    <div className="space-y-4">
-                        <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-400 font-medium">
-                            <span className="mr-2">✓</span> {artifactType} gerados com sucesso!
-                        </div>
-                        <p className="text-sm text-gray-400">O conteúdo foi gerado e está pronto para download nos formatos abaixo:</p>
-                        <DownloadOptions artifactName={artifactType} content={result.text} />
-                        
-                        {shouldShowRefinement(artifactType) ? (
-                            <RefinementForm 
-                                onRefine={(s) => handleRefine(artifactType, result.text, s)}
-                                onAccept={() => {
-                                    addMessage('bot', 
-                                        <div className="pt-4 border-t border-white/10">
-                                            <p className="mb-4 text-gray-200">O que você gostaria de fazer agora?</p>
-                                            <OptionSelector onSelect={(type) => handleOptionSelectRef.current?.(type)} completedArtifacts={newCompletedArtifacts} />
-                                        </div>
-                                    );
-                                }}
-                            />
-                        ) : (
-                            <div className="pt-4 border-t border-white/10">
-                                <p className="mb-4 text-gray-200">O que você gostaria de fazer agora?</p>
-                                <OptionSelector onSelect={(type) => handleOptionSelectRef.current?.(type)} completedArtifacts={newCompletedArtifacts} />
-                            </div>
-                        )}
-                    </div>,
-                    { isFullWidth: false }
+                    <ArtifactEditor 
+                        title={artifactType} 
+                        initialContent={result.text} 
+                        onSave={(content) => handleFunctionalRequirementsFinalizedRef.current?.(content)} 
+                    />, 
+                    { isFullWidth: true }
+                );
+                setIsLoading(false);
+                return;
+            }
+
+            if (artifactType === ArtifactType.TestCases) {
+                updateMessage(loadingMessageId, 
+                    <ArtifactEditor 
+                        title={artifactType} 
+                        initialContent={result.text} 
+                        onSave={(content) => handleTestCasesFinalizedRef.current?.(content)} 
+                    />, 
+                    { isFullWidth: true }
                 );
                 setIsLoading(false);
                 return;
@@ -273,9 +426,86 @@ const App: React.FC = () => {
             try {
                 const content = JSON.parse(e.target?.result as string);
                 setProjectContext(JSON.stringify(content, null, 2));
-                setCompletedArtifacts([ArtifactType.InitialSetup, ArtifactType.KnowledgeBase]);
+                
+                // Detectar artefatos presentes no JSON para habilitar os botões correspondentes
+                const detectedArtifacts: ArtifactType[] = [ArtifactType.InitialSetup, ArtifactType.KnowledgeBase];
+                
+                const normalize = (str: string) => str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+                
+                const getAllKeys = (obj: any): string[] => {
+                    let keys: string[] = [];
+                    if (!obj || typeof obj !== 'object') return keys;
+                    if (Array.isArray(obj)) {
+                        obj.forEach(item => {
+                            keys = keys.concat(getAllKeys(item));
+                        });
+                    } else {
+                        Object.keys(obj).forEach(key => {
+                            keys.push(key);
+                            keys = keys.concat(getAllKeys(obj[key]));
+                        });
+                    }
+                    return keys;
+                };
+
+                const rawKeys = getAllKeys(content);
+                const normalizedKeys = rawKeys.map(k => normalize(k));
+                
+                const mapping: { [key: string]: ArtifactType } = {
+                    'persona': ArtifactType.Personas,
+                    'requisito': ArtifactType.FunctionalRequirements,
+                    'requirement': ArtifactType.FunctionalRequirements,
+                    'tarefa': ArtifactType.TaskModel,
+                    'task': ArtifactType.TaskModel,
+                    'agente': ArtifactType.AgentModel,
+                    'agent': ArtifactType.AgentModel,
+                    'observacao': ArtifactType.Observation,
+                    'observation': ArtifactType.Observation,
+                    'entrevista': ArtifactType.SummarizeInterview,
+                    'interview': ArtifactType.SummarizeInterview,
+                    'organizacional': ArtifactType.MOTables,
+                    'organizational': ArtifactType.MOTables,
+                    'inventario': ArtifactType.KnowledgeInventory,
+                    'inventory': ArtifactType.KnowledgeInventory,
+                    'empatia': ArtifactType.EmpathyMap,
+                    'empathy': ArtifactType.EmpathyMap,
+                    'jornada': ArtifactType.UserJourney,
+                    'journey': ArtifactType.UserJourney,
+                    'hipotese': ArtifactType.HypothesisGeneration,
+                    'hypothesis': ArtifactType.HypothesisGeneration,
+                    'fluxo': ArtifactType.UserFlows,
+                    'flow': ArtifactType.UserFlows,
+                    'base_de_conhecimento': ArtifactType.KnowledgeBase,
+                    'knowledge_base': ArtifactType.KnowledgeBase,
+                    'casos_de_teste': ArtifactType.TestCases,
+                    'test_cases': ArtifactType.TestCases,
+                    'plano_mentor': ArtifactType.MonitoringPlan,
+                    'monitoring_plan': ArtifactType.MonitoringPlan,
+                };
+
+                for (const [key, type] of Object.entries(mapping)) {
+                    const normalizedSearchKey = normalize(key);
+                    if (normalizedKeys.some(k => k.includes(normalizedSearchKey))) {
+                        if (!detectedArtifacts.includes(type)) {
+                            detectedArtifacts.push(type);
+                        }
+                    }
+                }
+                
+                // Também verificar se o nome exato do artefato (ou parte dele) está nas chaves
+                Object.values(ArtifactType).forEach(type => {
+                    const normType = normalize(type);
+                    if (normalizedKeys.some(k => k === normType || k.includes(normType) || normType.includes(k))) {
+                        if (!detectedArtifacts.includes(type)) {
+                            detectedArtifacts.push(type);
+                        }
+                    }
+                });
+
+                setCompletedArtifacts(detectedArtifacts);
+                stateRef.current.completedArtifacts = detectedArtifacts; // Atualização manual imediata para evitar race conditions
                 addMessage('bot', <p className="text-emerald-400 font-medium">✓ Base de Conhecimento carregada com sucesso do arquivo: {file.name}</p>);
-                showMainMenu("Dados restaurados. O que faremos agora?");
+                showMainMenu("Dados restaurados. O que faremos agora?", detectedArtifacts);
             } catch (err) {
                 addMessage('bot', <p className="text-rose-400">Erro ao processar o arquivo JSON. Certifique-se de que é um arquivo válido gerado pelo Agente UX.</p>);
                 showMainMenu();
@@ -343,8 +573,14 @@ const App: React.FC = () => {
             } catch (error) { addMessage('bot', <AdditionalInfoForm artifactType={type} onSubmit={handleAdditionalInfoSubmit} isLoading={false} />); } finally { setIsLoading(false); }
             return;
         }
-        if (!projectContext) { addMessage('bot', <InputForm artifactType={type} onSubmit={(ctx) => handleInputSubmit(ctx)} isLoading={isLoading} />); }
-        else { addMessage('bot', <AdditionalInfoForm artifactType={type} onSubmit={handleAdditionalInfoSubmit} isLoading={isLoading} />); }
+        const customLabel = type === ArtifactType.Observation 
+            ? "Cole aqui a transcrição das observações que você deseja resumir e armazenar." 
+            : undefined;
+
+        if (!projectContext) { addMessage('bot', <InputForm artifactType={type} onSubmit={(ctx) => handleInputSubmit(ctx)} isLoading={isLoading} customLabel={customLabel} />); }
+        else { 
+            addMessage('bot', <AdditionalInfoForm artifactType={type} onSubmit={handleAdditionalInfoSubmit} isLoading={isLoading} customLabel={customLabel} />); 
+        }
     }, [isLoading, addMessage, handleGeneration, handleLoadJson, handleInputSubmit, handleAdditionalInfoSubmit, updateMessage, showMainMenu]);
     
     useEffect(() => { handleOptionSelectRef.current = handleOptionSelect; }, [handleOptionSelect]);

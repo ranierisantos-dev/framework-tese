@@ -6,6 +6,7 @@ interface InputFormProps {
     artifactType: ArtifactType;
     onSubmit: (context: string) => void;
     isLoading: boolean;
+    customLabel?: string;
 }
 
 const placeholders: { [key in ArtifactType]: string } = {
@@ -29,7 +30,7 @@ const placeholders: { [key in ArtifactType]: string } = {
     [ArtifactType.MonitoringPlan]: 'Descreva os papéis de mentoria ou o contexto para a transferência de conhecimento entre especialistas e iniciantes...',
 };
 
-const InputForm: React.FC<InputFormProps> = ({ artifactType, onSubmit, isLoading }) => {
+const InputForm: React.FC<InputFormProps> = ({ artifactType, onSubmit, isLoading, customLabel }) => {
     const [text, setText] = useState('');
     const [fileContent, setFileContent] = useState('');
     const [fileName, setFileName] = useState('');
@@ -60,7 +61,7 @@ const InputForm: React.FC<InputFormProps> = ({ artifactType, onSubmit, isLoading
         <form onSubmit={handleSubmit} className="space-y-5">
             <div className="relative group">
                 <label htmlFor="context-input" className="block text-sm font-medium text-gray-300 mb-2 ml-1">
-                    Forneça o contexto necessário:
+                    {customLabel || "Forneça o contexto necessário:"}
                 </label>
                 <div className="absolute -inset-0.5 bg-gradient-to-r from-orange-500 to-amber-500 rounded-lg opacity-20 group-hover:opacity-40 transition duration-500 blur"></div>
                 <textarea

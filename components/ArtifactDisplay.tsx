@@ -105,9 +105,15 @@ const ArtifactDisplay: React.FC<ArtifactDisplayProps> = ({ artifact }) => {
             }
             
             // Requisitos em Negrito
-            if (line.trim().startsWith('**Requisito') || line.trim().startsWith('Requisito #')) {
+            if (line.trim().startsWith('**Requisito') || line.trim().startsWith('Requisito #') || line.trim().startsWith('**RF') || line.trim().startsWith('**Regras de Negócio:')) {
                 const content = line.replace(/\*\*/g, '');
                 return <div key={i} className="font-bold text-gray-100 mt-4 mb-1">{content}</div>;
+            }
+
+            // Subtítulos de Modelo de Tarefas (####)
+            if (line.trim().startsWith('#### ')) {
+                const content = line.trim().replace('#### ', '');
+                return <div key={i} className="font-bold text-gray-100 mt-3 mb-1">{content}</div>;
             }
 
             return <div key={i} className="mb-1">{line}</div>;
