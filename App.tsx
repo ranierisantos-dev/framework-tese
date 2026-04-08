@@ -14,8 +14,12 @@ import ArtifactEditor from './components/ArtifactEditor';
 import SetupForm from './components/SetupForm';
 import KnowledgeUpload from './components/KnowledgeUpload';
 import RefinementForm from './components/RefinementForm';
+import PasswordGate from './components/PasswordGate';
 
 const App: React.FC = () => {
+    const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+        return localStorage.getItem('app_authenticated') === 'true';
+    });
     const [messages, setMessages] = useState<Message[]>([]);
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [projectContext, setProjectContext] = useState<string>('');
@@ -587,6 +591,7 @@ const App: React.FC = () => {
 
     return (
         <div className="flex flex-col h-screen text-[#EFEFEF] font-sans relative overflow-hidden">
+            {!isAuthenticated && <PasswordGate onAuthenticated={() => setIsAuthenticated(true)} />}
             <div className="fixed inset-0 bg-zinc-950 -z-10"></div>
             <header className="fixed top-0 left-0 right-0 z-50 h-20 bg-zinc-900/95 backdrop-blur-xl border-b border-orange-500/30 shadow-lg">
                 <div className="relative h-full flex items-center justify-center px-4">
